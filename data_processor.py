@@ -7,7 +7,10 @@ import tempfile
 
 class DataProcessor:
     def __init__(self):
-        self.embedder = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        self.embedder = HuggingFaceEmbeddings(
+        model_name="all-MiniLM-L6-v2",
+        model_kwargs={"device": "cpu"}  # Or "cuda" if you have GPU available
+        )
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200
