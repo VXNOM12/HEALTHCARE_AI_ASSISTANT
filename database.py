@@ -1,8 +1,7 @@
-# database.py
+# database.py (New File)
 import sqlite3
 import bcrypt
 import os
-import json
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 
@@ -15,7 +14,6 @@ class DatabaseManager:
     @contextmanager
     def _get_connection(self):
         conn = sqlite3.connect(DATABASE_NAME)
-        conn.row_factory = sqlite3.Row  # Enable row factory for dict-like access
         try:
             yield conn
         finally:
@@ -54,56 +52,17 @@ class DatabaseManager:
                 )
             ''')
             
-            # Chat history table - updated schema
+            # Chat history table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS chat_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
-                    conversation_id TEXT NOT NULL,
                     role TEXT NOT NULL,
                     content TEXT NOT NULL,
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(user_id) REFERENCES users(id)
                 )
             ''')
-            
-            # Conversation metadata table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS conversations (
-                    conversation_id TEXT PRIMARY KEY,
-                    user_id INTEGER NOT NULL,
-                    title TEXT NOT NULL,
-                    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    is_favorite BOOLEAN DEFAULT 0,
-                    tags TEXT,
-                    FOREIGN KEY(user_id) REFERENCES users(id)
-                )
-            ''')
-            
-            # Recent queries table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS recent_queries (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    query TEXT NOT NULL,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    conversation_id TEXT,
-                    FOREIGN KEY(user_id) REFERENCES users(id),
-                    FOREIGN KEY(conversation_id) REFERENCES conversations(conversation_id)
-                )
-            ''')
-            
-            # Favorites table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS favorite_queries (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    query TEXT NOT NULL,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY(user_id) REFERENCES users(id)
-                )
-            ''')
-            
             conn.commit()
 
     # User management methods
@@ -180,229 +139,24 @@ class DatabaseManager:
                 return True
             return False
 
-    # Conversation management methods
-    def create_conversation(self, user_id, title="New Conversation"):
-        conversation_id = os.urandom(8).hex()
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO conversations (conversation_id, user_id, title)
-                VALUES (?, ?, ?)
-            ''', (conversation_id, user_id, title))
-            conn.commit()
-            return conversation_id
-
-    def update_conversation_title(self, conversation_id, new_title):
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE conversations 
-                SET title = ?, last_updated = CURRENT_TIMESTAMP
-                WHERE conversation_id = ?
-            ''', (new_title, conversation_id))
-            conn.commit()
-            return cursor.rowcount > 0
-
-    def toggle_favorite_conversation(self, conversation_id):
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE conversations 
-                SET is_favorite = NOT is_favorite,
-                    last_updated = CURRENT_TIMESTAMP
-                WHERE conversation_id = ?
-            ''', (conversation_id,))
-            conn.commit()
-            return cursor.rowcount > 0
-
-    def get_user_conversations(self, user_id, limit=10):
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT conversation_id, title, last_updated, is_favorite
-                FROM conversations
-                WHERE user_id = ?
-                ORDER BY last_updated DESC
-                LIMIT ?
-            ''', (user_id, limit))
-            return [dict(row) for row in cursor.fetchall()]
-
-    def get_favorite_conversations(self, user_id, limit=10):
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT conversation_id, title, last_updated
-                FROM conversations
-                WHERE user_id = ? AND is_favorite = 1
-                ORDER BY last_updated DESC
-                LIMIT ?
-            ''', (user_id, limit))
-            return [dict(row) for row in cursor.fetchall()]
-
     # Chat history methods
-    def save_message(self, user_id, conversation_id, role, content):
+    def save_message(self, user_id, role, content):
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO chat_history (user_id, conversation_id, role, content)
-                VALUES (?, ?, ?, ?)
-            ''', (user_id, conversation_id, role, content))
-            
-            # Update the conversation's last_updated timestamp
-            cursor.execute('''
-                UPDATE conversations
-                SET last_updated = CURRENT_TIMESTAMP
-                WHERE conversation_id = ?
-            ''', (conversation_id,))
-            
-            # If this is a user message, add to recent queries
-            if role == "user":
-                # First check if it already exists
-                cursor.execute('''
-                    SELECT id FROM recent_queries
-                    WHERE user_id = ? AND query = ?
-                ''', (user_id, content))
-                
-                existing = cursor.fetchone()
-                if existing:
-                    # Update timestamp to move it to the top
-                    cursor.execute('''
-                        UPDATE recent_queries
-                        SET timestamp = CURRENT_TIMESTAMP,
-                            conversation_id = ?
-                        WHERE id = ?
-                    ''', (conversation_id, existing[0]))
-                else:
-                    # Insert new query, maintaining only the latest 10
-                    cursor.execute('''
-                        INSERT INTO recent_queries (user_id, query, conversation_id)
-                        VALUES (?, ?, ?)
-                    ''', (user_id, content, conversation_id))
-                    
-                    # Delete older queries if more than 10
-                    cursor.execute('''
-                        DELETE FROM recent_queries
-                        WHERE user_id = ? AND id NOT IN (
-                            SELECT id FROM recent_queries
-                            WHERE user_id = ?
-                            ORDER BY timestamp DESC
-                            LIMIT 10
-                        )
-                    ''', (user_id, user_id))
-            
+                INSERT INTO chat_history (user_id, role, content)
+                VALUES (?, ?, ?)
+            ''', (user_id, role, content))
             conn.commit()
 
-    def get_conversation_history(self, conversation_id):
+    def get_history(self, user_id, limit=100):
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT role, content, timestamp
-                FROM chat_history
-                WHERE conversation_id = ?
-                ORDER BY timestamp ASC
-            ''', (conversation_id,))
-            return [dict(row) for row in cursor.fetchall()]
-
-    def get_recent_conversations(self, user_id, limit=5):
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT c.conversation_id, c.title, c.last_updated, c.is_favorite,
-                       (SELECT content FROM chat_history 
-                        WHERE conversation_id = c.conversation_id AND role = 'user'
-                        ORDER BY timestamp DESC LIMIT 1) as last_query
-                FROM conversations c
-                WHERE c.user_id = ?
-                ORDER BY c.last_updated DESC
-                LIMIT ?
-            ''', (user_id, limit))
-            return [dict(row) for row in cursor.fetchall()]
-
-    # Recent queries methods
-    def get_recent_queries(self, user_id, limit=5):
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT query, conversation_id
-                FROM recent_queries
-                WHERE user_id = ?
-                ORDER BY timestamp DESC
-                LIMIT ?
-            ''', (user_id, limit))
-            return [dict(row) for row in cursor.fetchall()]
-
-    # Favorite queries methods
-    def add_favorite_query(self, user_id, query):
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            # Check if already exists
-            cursor.execute('''
-                SELECT id FROM favorite_queries
-                WHERE user_id = ? AND query = ?
-            ''', (user_id, query))
-            
-            if not cursor.fetchone():
-                cursor.execute('''
-                    INSERT INTO favorite_queries (user_id, query)
-                    VALUES (?, ?)
-                ''', (user_id, query))
-                conn.commit()
-                return True
-            return False
-
-    def remove_favorite_query(self, user_id, query):
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                DELETE FROM favorite_queries
-                WHERE user_id = ? AND query = ?
-            ''', (user_id, query))
-            conn.commit()
-            return cursor.rowcount > 0
-
-    def get_favorite_queries(self, user_id, limit=5):
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT query
-                FROM favorite_queries
-                WHERE user_id = ?
-                ORDER BY timestamp DESC
-                LIMIT ?
-            ''', (user_id, limit))
-            return [row[0] for row in cursor.fetchall()]
-
-    # Statistics and aggregation methods
-    def get_user_stats(self, user_id):
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            stats = {}
-            
-            # Total conversations
-            cursor.execute('SELECT COUNT(*) FROM conversations WHERE user_id = ?', (user_id,))
-            stats['total_conversations'] = cursor.fetchone()[0]
-            
-            # Total messages
-            cursor.execute('SELECT COUNT(*) FROM chat_history WHERE user_id = ?', (user_id,))
-            stats['total_messages'] = cursor.fetchone()[0]
-            
-            # Messages by role
-            cursor.execute('''
-                SELECT role, COUNT(*) 
+                SELECT role, content 
                 FROM chat_history 
                 WHERE user_id = ? 
-                GROUP BY role
-            ''', (user_id,))
-            stats['messages_by_role'] = dict(cursor.fetchall())
-            
-            # Recent activity (past 7 days)
-            cursor.execute('''
-                SELECT DATE(timestamp) as date, COUNT(*) 
-                FROM chat_history 
-                WHERE user_id = ? AND timestamp > datetime('now', '-7 days')
-                GROUP BY DATE(timestamp)
-                ORDER BY date
-            ''', (user_id,))
-            stats['recent_activity'] = dict(cursor.fetchall())
-            
-            return stats
+                ORDER BY timestamp DESC 
+                LIMIT ?
+            ''', (user_id, limit))
+            return [{"role": row[0], "content": row[1]} for row in cursor.fetchall()]
