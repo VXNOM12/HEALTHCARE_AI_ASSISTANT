@@ -2,7 +2,6 @@ import streamlit as st
 import os
 import json
 from dotenv import load_dotenv
-from database import DatabaseManager
 
 # Make sure set_page_config is the very first Streamlit command
 st.set_page_config(
@@ -22,7 +21,18 @@ except:
 config = {
     'app_title': "MediAssist AI: Your Personal Medical Assistant",
     'app_description': "Get reliable medical information, symptom analysis, and health guidance from our AI-powered healthcare assistant.",
-    'available_models': ["llama3-70b-8192", "mixtral-8x7b-32768", "gemma-7b-it"]
+    'available_models': ["llama3-70b-8192", "mixtral-8x7b-32768", "gemma-7b-it"],
+    'recent_queries': [
+        "What are the symptoms of diabetes?",
+        "How to read blood test results...",
+        "Common side effects of antibiotics...",
+        "Diet recommendations for hypertension..."
+    ],
+    'favorite_queries': [
+        "First aid for minor burns...",
+        "Understanding cholesterol levels...",
+        "Exercise routines for back pain..."
+    ]
 }
 
 # Define CSS
@@ -252,40 +262,6 @@ div[data-baseweb="select"] {
     font-size: 20px !important;
     z-index: 1000 !important;
 }
-
-/* Login form styling */
-.login-form {
-    max-width: 400px;
-    margin: 100px auto;
-    padding: 20px;
-    background-color: #1a1d26;
-    border-radius: 5px;
-    border: 1px solid #303243;
-}
-
-.login-form h2 {
-    text-align: center;
-    color: white;
-    margin-bottom: 20px;
-}
-
-/* Active query styling */
-.active-query {
-    color: #f54242 !important;
-    font-weight: bold !important;
-    border-left: 2px solid #f54242 !important;
-    padding-left: 10px !important;
-}
-
-/* Favorite button */
-.favorite-button {
-    color: #f8c95f !important;
-    background: transparent !important;
-    border: none !important;
-    font-size: 16px !important;
-    cursor: pointer !important;
-    margin-left: 5px !important;
-}
 """
 
 # Apply CSS
@@ -293,143 +269,36 @@ st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 class MedicalChatbot:
     def __init__(self):
-        self.db = DatabaseManager()
         self.initialize_session()
-        self.setup_auth()
-        
+        self.setup_ui()
+    
     def initialize_session(self):
-        # User state
-        if "logged_in" not in st.session_state:
-            st.session_state.logged_in = False
-        if "user_id" not in st.session_state:
-            st.session_state.user_id = None
-        if "username" not in st.session_state:
-            st.session_state.username = None
-            
-        # Conversation state
         if "history" not in st.session_state:
             st.session_state.history = []
-        if "conversation_id" not in st.session_state:
-            st.session_state.conversation_id = None
-        if "model_name" not in st.session_state:
-            st.session_state.model_name = config['available_models'][0]
-        if "active_query" not in st.session_state:
-            st.session_state.active_query = None
         if "dataset" not in st.session_state:
             st.session_state.dataset = None
         if "vector_store" not in st.session_state:
             st.session_state.vector_store = None
-    
-    def setup_auth(self):
-        if not st.session_state.logged_in:
-            self.show_login()
-        else:
-            self.setup_ui()
-            
-    def show_login(self):
-        st.markdown("<div class='login-form'>", unsafe_allow_html=True)
-        st.markdown("<h2>MediAssist AI Login</h2>", unsafe_allow_html=True)
-        
-        tab1, tab2 = st.tabs(["Login", "Register"])
-        
-        with tab1:
-            username = st.text_input("Username", key="login_username")
-            password = st.text_input("Password", type="password", key="login_password")
-            
-            if st.button("Login", key="login_button"):
-                user_id = self.db.verify_user(username, password)
-                if user_id:
-                    st.session_state.logged_in = True
-                    st.session_state.user_id = user_id
-                    st.session_state.username = username
-                    st.rerun()
-                else:
-                    st.error("Invalid username or password")
-                    
-        with tab2:
-            new_username = st.text_input("Choose Username", key="reg_username")
-            new_password = st.text_input("Choose Password", type="password", key="reg_password")
-            confirm_password = st.text_input("Confirm Password", type="password", key="reg_confirm")
-            
-            if st.button("Register", key="register_button"):
-                if new_password != confirm_password:
-                    st.error("Passwords do not match")
-                elif len(new_password) < 6:
-                    st.error("Password must be at least 6 characters")
-                else:
-                    try:
-                        user_id = self.db.create_user(new_username, new_password)
-                        st.success("Registration successful! Please login.")
-                    except Exception as e:
-                        st.error(f"Registration failed: {e}")
-                        
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-        # Demo mode - auto login
-        if st.button("Demo Mode (Auto Login)", key="demo_login"):
-            # Try to use demo account or create one
-            user_id = self.db.verify_user("demo", "demo123")
-            if not user_id:
-                user_id = self.db.create_user("demo", "demo123")
-            
-            st.session_state.logged_in = True
-            st.session_state.user_id = user_id
-            st.session_state.username = "demo"
-            st.rerun()
-    
-    def create_new_conversation(self):
-        """Create a new conversation and reset the chat history"""
-        conversation_id = self.db.create_conversation(st.session_state.user_id)
-        st.session_state.conversation_id = conversation_id
-        st.session_state.history = []
-        return conversation_id
-    
-    def load_conversation(self, conversation_id):
-        """Load an existing conversation"""
-        st.session_state.conversation_id = conversation_id
-        history = self.db.get_conversation_history(conversation_id)
-        st.session_state.history = history
-        return history
+        if "model_name" not in st.session_state:
+            st.session_state.model_name = config['available_models'][0]
+        if "user_id" not in st.session_state:
+            st.session_state.user_id = None
+        if "session_id" not in st.session_state:
+            st.session_state.session_id = None
+        if "pending_query" not in st.session_state:
+            st.session_state.pending_query = None
     
     def handle_query_click(self, query):
         """Handle when a user clicks on a recent or favorite query"""
-        # If no active conversation, create one
-        if not st.session_state.conversation_id:
-            self.create_new_conversation()
-            
-        st.session_state.active_query = query
-        self.process_user_input(query)
+        st.session_state.pending_query = query
+        # Force a rerun to submit the query
         st.rerun()
-        
-    def add_to_favorites(self, query):
-        """Add the current query to favorites"""
-        if query:
-            self.db.add_favorite_query(st.session_state.user_id, query)
-            st.rerun()
-    
-    def remove_from_favorites(self, query):
-        """Remove a query from favorites"""
-        if query:
-            self.db.remove_favorite_query(st.session_state.user_id, query)
-            st.rerun()
     
     def setup_ui(self):
         # Sidebar
         with st.sidebar:
             # Configuration Section
             st.markdown('<div class="sidebar-header">Configuration</div>', unsafe_allow_html=True)
-            
-            # User info and logout
-            st.markdown(f"<div style='margin-bottom:10px'>Logged in as: <b>{st.session_state.username}</b></div>", unsafe_allow_html=True)
-            if st.button("Logout"):
-                for key in st.session_state.keys():
-                    del st.session_state[key]
-                st.rerun()
-                
-            # New Conversation button
-            if st.button("New Conversation", use_container_width=True):
-                self.create_new_conversation()
-                st.rerun()
             
             # Model Selection
             st.markdown("<div style='margin-top: 10px;'>Select Model</div>", unsafe_allow_html=True)
@@ -445,7 +314,7 @@ class MedicalChatbot:
             # Divider
             st.markdown('<hr style="margin: 15px 0; border-color: #2d303e;">', unsafe_allow_html=True)
             
-            # Dataset Management section
+            # Dataset Management section styled to match Image 1
             st.markdown('<div class="sidebar-header">Dataset Management</div>', unsafe_allow_html=True)
             
             # File uploader with custom styling
@@ -465,97 +334,33 @@ class MedicalChatbot:
             # Divider
             st.markdown('<hr style="margin: 15px 0; border-color: #2d303e;">', unsafe_allow_html=True)
             
-            # Load and display recent conversations
-            st.markdown('<div class="section-title">Recent Conversations ▾</div>', unsafe_allow_html=True)
-            
-            recent_conversations = self.db.get_recent_conversations(st.session_state.user_id)
-            for conv in recent_conversations:
-                title = conv['title'] or f"Conversation {conv['conversation_id'][:6]}"
-                if st.button(title, key=f"conv_{conv['conversation_id']}", 
-                          help="Click to load this conversation",
-                          use_container_width=True,
-                          type="secondary"):
-                    self.load_conversation(conv['conversation_id'])
-                    st.rerun()
-            
-            # Divider
-            st.markdown('<hr style="margin: 15px 0; border-color: #2d303e;">', unsafe_allow_html=True)
-            
-            # Recent section with clickable items and active query highlighting
-            st.markdown('<div class="section-title">Recent Queries ▾</div>', unsafe_allow_html=True)
-            
-            # Get recent queries from database
-            recent_queries = self.db.get_recent_queries(st.session_state.user_id)
+            # Recent section with clickable items
+            st.markdown('<div class="section-title">Recent ▾</div>', unsafe_allow_html=True)
             
             # Create clickable buttons that look like text for recent queries
-            for item in recent_queries:
-                query = item['query']
-                # Check if this is the active query
-                is_active = st.session_state.active_query == query
-                
-                # Create row with query and favorite button
-                col1, col2 = st.columns([9, 1])
-                
-                with col1:
-                    # Style for active query
-                    if is_active:
-                        st.markdown(f"<div class='active-query'>{query}</div>", unsafe_allow_html=True)
-                    else:
-                        if st.button(query, key=f"recent_{query}", 
-                                  help="Click to ask this question",
-                                  use_container_width=True,
-                                  type="secondary"):
-                            self.handle_query_click(query)
-                
-                # Add favorite button in second column
-                with col2:
-                    # Check if query is already in favorites
-                    is_favorite = query in self.db.get_favorite_queries(st.session_state.user_id)
-                    if is_favorite:
-                        if st.button("★", key=f"unfav_{query}", help="Remove from favorites"):
-                            self.remove_from_favorites(query)
-                    else:
-                        if st.button("☆", key=f"fav_{query}", help="Add to favorites"):
-                            self.add_to_favorites(query)
+            for query in config['recent_queries']:
+                if st.button(query, key=f"recent_{query}", 
+                            help="Click to ask this question",
+                            use_container_width=True,
+                            type="secondary"):
+                    self.handle_query_click(query)
             
             # Favorites section with clickable items
             st.markdown('<div class="section-title">Favorites ▾</div>', unsafe_allow_html=True)
             
-            # Get favorite queries from database
-            favorite_queries = self.db.get_favorite_queries(st.session_state.user_id)
-            
             # Create clickable buttons that look like text for favorite queries
-            for query in favorite_queries:
-                # Check if this is the active query
-                is_active = st.session_state.active_query == query
-                
-                col1, col2 = st.columns([9, 1])
-                
-                with col1:
-                    # Style for active query
-                    if is_active:
-                        st.markdown(f"<div class='active-query'>{query}</div>", unsafe_allow_html=True)
-                    else:
-                        if st.button(query, key=f"favorite_{query}", 
-                                  help="Click to ask this question",
-                                  use_container_width=True,
-                                  type="secondary"):
-                            self.handle_query_click(query)
-                
-                # Add remove favorite button
-                with col2:
-                    if st.button("✕", key=f"remove_{query}", help="Remove from favorites"):
-                        self.remove_from_favorites(query)
+            for query in config['favorite_queries']:
+                if st.button(query, key=f"favorite_{query}", 
+                            help="Click to ask this question",
+                            use_container_width=True,
+                            type="secondary"):
+                    self.handle_query_click(query)
 
         # Add a "Deploy" button to the top right
         st.markdown('<div style="position: absolute; top: 5px; right: 10px; z-index: 1000;"><button style="background-color: transparent; color: white; border: none; cursor: pointer;">Deploy</button></div>', unsafe_allow_html=True)
 
         # Main content area with padding for fixed chat input
         st.markdown('<div class="main-content">', unsafe_allow_html=True)
-        
-        # If no conversation is selected or active, create one
-        if not st.session_state.conversation_id:
-            self.create_new_conversation()
         
         # Render the chat interface
         self.render_chat_interface()
@@ -564,44 +369,49 @@ class MedicalChatbot:
         
         # Add attachment icon to chat input
         st.markdown('<div class="attachment-icon">📎</div>', unsafe_allow_html=True)
+            
+        # Hide the buttons with CSS
+        st.markdown("""
+        <style>
+        [data-testid="baseButton-secondary"] {
+            background-color: transparent !important;
+            color: #b0b0b0 !important;
+            border: none !important;
+            text-align: left !important;
+            padding: 5px 0 !important;
+            font-size: 14px !important;
+        }
+        
+        [data-testid="baseButton-secondary"]:hover {
+            color: white !important;
+            text-decoration: underline !important;
+            background-color: transparent !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
     
     def render_chat_interface(self):
         st.title(config['app_title'])
         st.markdown(f"<p class='app-description'>{config['app_description']}</p>", unsafe_allow_html=True)
 
-        # Display conversation title if it exists
-        if st.session_state.conversation_id:
-            conv_info = next((conv for conv in self.db.get_recent_conversations(st.session_state.user_id) 
-                             if conv['conversation_id'] == st.session_state.conversation_id), None)
-            if conv_info:
-                title = conv_info['title']
-                st.markdown(f"<h3 style='text-align:center; margin-bottom:20px;'>{title}</h3>", unsafe_allow_html=True)
-
-        # Display chat history from session state
+        # Display chat history
         for message in st.session_state.history:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
-            
+
+        # Process pending query if there is one
+        if st.session_state.pending_query:
+            query = st.session_state.pending_query
+            st.session_state.pending_query = None
+            self.process_user_input(query)
+
         # Chat input (will be positioned at the bottom with CSS)
         if prompt := st.chat_input("Type a message"):
             self.process_user_input(prompt)
     
     def process_user_input(self, prompt):
-        # Ensure we have an active conversation
-        if not st.session_state.conversation_id:
-            self.create_new_conversation()
-            
         # Add user message to chat history
-        user_message = {"role": "user", "content": prompt}
-        st.session_state.history.append(user_message)
-        
-        # Save to database
-        self.db.save_message(
-            st.session_state.user_id, 
-            st.session_state.conversation_id,
-            "user", 
-            prompt
-        )
+        st.session_state.history.append({"role": "user", "content": prompt})
         
         # Display user message
         with st.chat_message("user"):
@@ -611,67 +421,7 @@ class MedicalChatbot:
         response = self.generate_response(prompt)
         
         # Add bot response to chat history
-        assistant_message = {"role": "assistant", "content": response}
-        st.session_state.history.append(assistant_message)
-        
-        # Save to database
-        self.db.save_message(
-            st.session_state.user_id, 
-            st.session_state.conversation_id,
-            "assistant", 
-            response
-        )
-        
-        # Display bot response
-        with st.chat_message("assistant"):
-            st.markdown(response)
-            
-        # Set as active query
-        st.session_state.active_query = prompt
-    
-    def process_file_upload(self, uploaded_file):
-        """Process an uploaded file and add it to the chat context"""
-        # Ensure we have an active conversation
-        if not st.session_state.conversation_id:
-            self.create_new_conversation()
-            
-        # Create a message about the uploaded file
-        file_message = f"File uploaded: {uploaded_file.name} ({uploaded_file.type})"
-        
-        # Add file upload message to chat history
-        user_message = {"role": "user", "content": file_message}
-        st.session_state.history.append(user_message)
-        
-        # Save to database
-        self.db.save_message(
-            st.session_state.user_id, 
-            st.session_state.conversation_id,
-            "user", 
-            file_message
-        )
-        
-        # Display file upload message
-        with st.chat_message("user"):
-            st.markdown(file_message)
-            
-            # If it's an image, display it
-            if uploaded_file.type.startswith('image'):
-                st.image(uploaded_file, use_column_width=True)
-        
-        # Generate a response about the uploaded file
-        response = f"I've received your file: {uploaded_file.name}. What would you like me to do with this file?"
-        
-        # Add response to chat history
-        assistant_message = {"role": "assistant", "content": response}
-        st.session_state.history.append(assistant_message)
-        
-        # Save to database
-        self.db.save_message(
-            st.session_state.user_id, 
-            st.session_state.conversation_id,
-            "assistant", 
-            response
-        )
+        st.session_state.history.append({"role": "assistant", "content": response})
         
         # Display bot response
         with st.chat_message("assistant"):
@@ -730,3 +480,4 @@ class MedicalChatbot:
 if __name__ == "__main__":
     chatbot = MedicalChatbot()
 
+# Run the app: streamlit run streamlit_app.py
